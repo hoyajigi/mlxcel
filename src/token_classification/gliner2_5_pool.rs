@@ -24,8 +24,6 @@
 //! read start-major, dictionary insertion order on ties) is reproduced
 //! exactly, because it decides which spans can be returned at all.
 
-use std::collections::HashMap;
-
 use anyhow::{Result, bail};
 use mlxcel_core::layers::UnifiedLinear;
 use mlxcel_core::utils::array_to_vec_f32;
@@ -36,7 +34,8 @@ use super::gliner2_5_layers::{BoundaryHeadSettings, MASK_LOGIT, linear, scalar};
 
 /// The pool: `pool_size` boundary pairs, the first `count` of them real.
 pub(crate) struct PooledCandidates {
-    /// `(start, end)` boundary indices, `(0, 0)` past `count`.
+    /// `(start, end)` boundary indices, `(0, 0)` past `count`; the length is
+    /// `min(pool_size, top_k * top_k)`.
     pub pairs: Vec<(usize, usize)>,
     pub count: usize,
     /// `[P]` int32 starts.
@@ -55,7 +54,7 @@ pub(crate) struct DocumentCandidatePool {
     pool_boundary_top_k: usize,
     pool_size: usize,
     min_pool_per_query: usize,
-    scale: f32,
+    sqrt_dim: f32,
 }
 
 /// Indices of `values` by descending value; equal values keep index order,
@@ -79,7 +78,7 @@ impl DocumentCandidatePool {
             pool_boundary_top_k: settings.pool_boundary_top_k,
             pool_size: settings.pool_size,
             min_pool_per_query: settings.min_pool_per_query,
-            scale: 1.0 / (settings.boundary_dim as f32).sqrt(),
+            sqrt_dim: (settings.boundary_dim as f32).sqrt(),
         })
     }
 
@@ -96,7 +95,9 @@ impl DocumentCandidatePool {
             &mlxcel_core::take(projected_end, ends, 0),
         );
         let summed = mlxcel_core::sum_axis(&product, -1, false);
-        mlxcel_core::multiply(&summed, &scalar(self.scale, &summed))
+        // Divide, as upstream does: `x * (1 / s)` can differ by an ulp, and
+        // the host ranking below compares these values.
+        mlxcel_core::divide(&summed, &scalar(self.sqrt_dim, &summed))
     }
 
     /// Build the pool for `boundary_states` (`[T + 1, dim]`) from the
@@ -117,6 +118,13 @@ impl DocumentCandidatePool {
         }
         let projected_start = self.start_projection.forward(boundary_states);
         let projected_end = self.end_projection.forward(boundary_states);
+        // The readbacks below evaluate unconditionally; surface an MLX error
+        // (a checkpoint whose tensors disagree with its config, or memory) as
+        // an `Err` instead of an abort.
+        for logits in [start_logits, end_logits] {
+            mlxcel_core::try_eval(logits)
+                .map_err(|e| anyhow::anyhow!("gliner2_5 pool: evaluation failed: {e}"))?;
+        }
         let start_host = array_to_vec_f32(start_logits);
         let end_host = array_to_vec_f32(end_logits);
         let union = |plane: &[f32]| -> Vec<f32> {
@@ -157,7 +165,9 @@ impl DocumentCandidatePool {
             &as_array(&pair_end),
         ));
 
-        // Valid pairs in grid order, with their global priority.
+        // Valid pairs in grid order, with their global priority. `starts` and
+        // `ends` are permutations, so every `(s, e)` is unique and
+        // `priorities[row]` is upstream's `priorities[(s, e)]`.
         let pair_rows: Vec<(usize, usize, usize)> = (0..pair_start.len())
             .filter(|&i| pair_end[i] > pair_start[i])
             .map(|i| (pair_start[i], pair_end[i], i))
@@ -165,11 +175,6 @@ impl DocumentCandidatePool {
         let mut priorities: Vec<((usize, usize), f32)> = pair_rows
             .iter()
             .map(|&(s, e, i)| ((s, e), compatibility[i] + union_start[s] + union_end[e]))
-            .collect();
-        let slot: HashMap<(usize, usize), usize> = priorities
-            .iter()
-            .enumerate()
-            .map(|(index, (pair, _))| (*pair, index))
             .collect();
         let quota = self.min_pool_per_query.min(pair_rows.len());
         if quota > 0 {
@@ -187,8 +192,7 @@ impl DocumentCandidatePool {
                     .take(quota)
                     .enumerate()
                 {
-                    let (s, e, _) = pair_rows[row];
-                    let entry = &mut priorities[slot[&(s, e)]];
+                    let entry = &mut priorities[row];
                     entry.1 = entry.1.max(5000.0 + (quota - rank) as f32);
                 }
             }
@@ -200,13 +204,18 @@ impl DocumentCandidatePool {
             .map(|index| priorities[index].0)
             .collect();
         let count = pairs.len();
-        pairs.resize(self.pool_size, (0, 0));
+        // Upstream pads to `pool_size`; every scorer op is per row and the
+        // padding is masked, so padding only to what the grid can hold gives
+        // the same logits for the real rows without a `pool_size`-sized pool
+        // for a short text.
+        let width = self.pool_size.min(top_k * top_k).max(1);
+        pairs.resize(width, (0, 0));
 
         let starts = as_array(&pairs.iter().map(|p| p.0).collect::<Vec<_>>());
         let ends = as_array(&pairs.iter().map(|p| p.1).collect::<Vec<_>>());
-        let mask_host: Vec<i32> = (0..self.pool_size).map(|i| i32::from(i < count)).collect();
+        let mask_host: Vec<i32> = (0..width).map(|i| i32::from(i < count)).collect();
         let mask = mlxcel_core::astype(
-            &mlxcel_core::from_slice_i32(&mask_host, &[self.pool_size as i32]),
+            &mlxcel_core::from_slice_i32(&mask_host, &[width as i32]),
             dtype::BOOL,
         );
         let compat = self.compatibility(&projected_start, &projected_end, &starts, &ends);

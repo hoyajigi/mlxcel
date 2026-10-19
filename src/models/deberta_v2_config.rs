@@ -19,7 +19,7 @@
 //! 500-line file guideline; both items are re-exported there, so callers keep
 //! using `crate::models::deberta_v2::{DebertaV2Args, relative_position_buckets}`.
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -38,8 +38,10 @@ struct RawDebertaV2Args {
     #[serde(default = "default_relative_attention")]
     relative_attention: bool,
     #[serde(default)]
-    pos_att_type: Vec<String>,
-    #[serde(default = "default_true")]
+    pos_att_type: PosAttType,
+    /// Hugging Face's default is `false`; a config that omits the key uses
+    /// separate position projections, which are not ported.
+    #[serde(default)]
     share_att_key: bool,
     #[serde(default = "default_true")]
     position_biased_input: bool,
@@ -55,6 +57,34 @@ struct RawDebertaV2Args {
     conv_kernel_size: usize,
     #[serde(default)]
     embedding_size: Option<usize>,
+}
+
+/// `pos_att_type` as a list (`["p2c", "c2p"]`) or Hugging Face's legacy
+/// `"p2c|c2p"` string.
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(untagged)]
+enum PosAttType {
+    #[default]
+    Unset,
+    List(Vec<String>),
+    Joined(String),
+}
+
+impl PosAttType {
+    fn terms(&self) -> Vec<String> {
+        match self {
+            Self::Unset => Vec::new(),
+            Self::List(terms) => terms
+                .iter()
+                .map(|t| t.trim().to_ascii_lowercase())
+                .collect(),
+            Self::Joined(joined) => joined
+                .split('|')
+                .map(|t| t.trim().to_ascii_lowercase())
+                .filter(|t| !t.is_empty())
+                .collect(),
+        }
+    }
 }
 
 fn default_minus_one() -> i64 {
@@ -105,7 +135,8 @@ impl DebertaV2Args {
     /// Read the encoder geometry, refusing the DeBERTa options this port does
     /// not implement rather than running them wrong.
     pub fn from_config(config: &Value) -> Result<Self> {
-        let raw: RawDebertaV2Args = serde_json::from_value(config.clone())?;
+        let raw: RawDebertaV2Args =
+            serde_json::from_value(config.clone()).context("deberta-v2 config")?;
         if raw.hidden_size == 0 || raw.num_attention_heads == 0 {
             bail!("deberta-v2 config: hidden_size and num_attention_heads must be non-zero");
         }
@@ -157,11 +188,7 @@ impl DebertaV2Args {
             "none" | "" => false,
             other => bail!("deberta-v2 config: norm_rel_ebd `{other}` is not supported"),
         };
-        let pos_att_type: Vec<String> = raw
-            .pos_att_type
-            .iter()
-            .map(|t| t.trim().to_ascii_lowercase())
-            .collect();
+        let pos_att_type = raw.pos_att_type.terms();
         for term in &pos_att_type {
             if term != "c2p" && term != "p2c" {
                 bail!(

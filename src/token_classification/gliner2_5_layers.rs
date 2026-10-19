@@ -26,6 +26,10 @@ pub(crate) const MASK_LOGIT: f32 = -1e4;
 /// `nn.LayerNorm` default epsilon in the head (the encoder has its own).
 const HEAD_LAYER_NORM_EPS: f32 = 1e-5;
 
+/// Ceiling on `pool_boundary_top_k`: the pool scores every pair of the top
+/// starts and ends, so the grid is its square (upstream ships 32).
+pub const MAX_POOL_BOUNDARY_TOP_K: usize = 1024;
+
 /// The `boundary_head` settings this port reads, with upstream's defaults.
 #[derive(Debug, Clone, PartialEq)]
 pub struct BoundaryHeadSettings {
@@ -45,14 +49,20 @@ pub struct BoundaryHeadSettings {
 impl BoundaryHeadSettings {
     /// Read the settings object, refusing the head variants upstream refuses.
     pub fn from_config(settings: &serde_json::Value) -> Result<Self> {
+        // Every size becomes an `i32` array dimension, so it must fit one.
         let int = |key: &str, default: u64| -> Result<usize> {
             match settings.get(key) {
                 None | Some(serde_json::Value::Null) => Ok(default as usize),
-                Some(value) => value.as_u64().map(|v| v as usize).ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "boundary_head.{key} must be a non-negative integer, got {value}"
-                    )
-                }),
+                Some(value) => value
+                    .as_u64()
+                    .and_then(|v| i32::try_from(v).ok())
+                    .map(|v| v as usize)
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "boundary_head.{key} must be an integer in 0..={}, got {value}",
+                            i32::MAX
+                        )
+                    }),
             }
         };
         let pool = settings
@@ -81,6 +91,21 @@ impl BoundaryHeadSettings {
             Some(value) if !value.is_null() => int("pool_size", 192)?,
             _ => int("candidate_budget", 192)?,
         };
+        let pool_boundary_top_k = int("pool_boundary_top_k", 32)?;
+        if pool_boundary_top_k > MAX_POOL_BOUNDARY_TOP_K {
+            bail!(
+                "boundary_head.pool_boundary_top_k {pool_boundary_top_k} exceeds {MAX_POOL_BOUNDARY_TOP_K}; the candidate grid is its square"
+            );
+        }
+        let boundary_ffn_multiplier = settings
+            .get("boundary_ffn_multiplier")
+            .and_then(serde_json::Value::as_f64)
+            .unwrap_or(2.0);
+        if !boundary_ffn_multiplier.is_finite() || boundary_ffn_multiplier <= 0.0 {
+            bail!(
+                "boundary_head.boundary_ffn_multiplier must be a positive number, got {boundary_ffn_multiplier}"
+            );
+        }
         Ok(Self {
             boundary_dim,
             content_dim: int("content_dim", 64)?,
@@ -88,12 +113,9 @@ impl BoundaryHeadSettings {
             boundary_attention_heads: heads,
             boundary_attention_layers: int("boundary_attention_layers", 0)?,
             boundary_attention_window: int("boundary_attention_window", 0)?,
-            boundary_ffn_multiplier: settings
-                .get("boundary_ffn_multiplier")
-                .and_then(serde_json::Value::as_f64)
-                .unwrap_or(2.0),
+            boundary_ffn_multiplier,
             boundary_refinement_layers: int("boundary_refinement_layers", 1)?,
-            pool_boundary_top_k: int("pool_boundary_top_k", 32)?,
+            pool_boundary_top_k,
             pool_size,
             min_pool_per_query: int("min_pool_per_query", 8)?,
         })
@@ -132,12 +154,15 @@ pub(crate) fn scalar(value: f32, like: &MlxArray) -> UniquePtr<MlxArray> {
     mlxcel_core::full_f32(&[1], value, mlxcel_core::array_dtype(like))
 }
 
-/// `x[..., start..end]` along the last axis.
+/// `x[..., start..end]` along the last axis; a rank-0 array is returned as is.
 pub(crate) fn slice_last(x: &MlxArray, start: i32, end: i32) -> UniquePtr<MlxArray> {
     let shape = mlxcel_core::array_shape(x);
+    let Some(last) = shape.len().checked_sub(1) else {
+        return mlxcel_core::copy(x);
+    };
     let mut starts = vec![0; shape.len()];
     let mut stops = shape.clone();
-    *starts.last_mut().expect("rank >= 1") = start;
-    *stops.last_mut().expect("rank >= 1") = end;
+    starts[last] = start;
+    stops[last] = end;
     mlxcel_core::slice(x, &starts, &stops)
 }

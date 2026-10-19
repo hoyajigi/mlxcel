@@ -86,10 +86,10 @@ fn live_config() -> Value {
 }
 
 #[test]
-fn relative_buckets_match_hugging_face_for_lengths_8_and_600() {
+fn relative_buckets_match_hugging_face_for_lengths_8_600_and_4096() {
     let fixture = layer_fixture();
     let expected = &fixture["hf_relative_buckets"];
-    for length in [8usize, 600] {
+    for length in [8usize, 600, 4096] {
         let want = ints(&expected[length.to_string()]);
         let got = relative_position_buckets(length, 256, 512);
         assert_eq!(got.len(), 2 * length - 1);
@@ -160,6 +160,33 @@ fn unported_options_are_refused_at_config_time() {
             .unwrap_or_else(|| panic!("{key} should be refused"));
         assert!(err.to_string().contains(needle), "{key}: {err}");
     }
+    // Hugging Face defaults `share_att_key` to false, which is the unported
+    // separate-projection layout, so an absent key is refused rather than
+    // silently read as shared.
+    let mut absent = live_config();
+    absent.as_object_mut().unwrap().remove("share_att_key");
+    let err = DebertaV2Args::from_config(&absent).err().unwrap();
+    assert!(err.to_string().contains("share_att_key"), "{err}");
+    // A missing required field reports the config it came from.
+    let mut missing = live_config();
+    missing.as_object_mut().unwrap().remove("hidden_size");
+    let err = format!("{:#}", DebertaV2Args::from_config(&missing).err().unwrap());
+    assert!(
+        err.contains("deberta-v2 config") && err.contains("hidden_size"),
+        "{err}"
+    );
+}
+
+#[test]
+fn pos_att_type_accepts_the_legacy_joined_string() {
+    let mut config = live_config();
+    config["pos_att_type"] = json!("p2c|c2p");
+    let args = DebertaV2Args::from_config(&config).unwrap();
+    assert!(args.c2p && args.p2c);
+    config["pos_att_type"] = json!("c2p");
+    let args = DebertaV2Args::from_config(&config).unwrap();
+    assert!(args.c2p && !args.p2c);
+    assert!((args.attention_scale() - (64.0f32 * 2.0).sqrt()).abs() < 1e-6);
 }
 
 /// Weights of the tiny fixture as the encoder reads them.

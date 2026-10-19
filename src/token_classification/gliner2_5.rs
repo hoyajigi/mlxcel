@@ -62,6 +62,9 @@ pub const MODEL_TYPES: &[&str] = &["gliner2", "gliner2_5"];
 pub const ARCHITECTURES: &[&str] = &["Gliner2ForSchemaExtraction", "BoundaryExtractor"];
 /// Upstream's `ModelConfig.max_len` default.
 pub const DEFAULT_MAX_LEN: usize = 4096;
+/// Largest `max_len` accepted: every layer holds `[heads, L, L]` scores, so a
+/// config past this would ask for tens of gigabytes per sequence.
+pub const MAX_SUPPORTED_MAX_LEN: usize = 32_768;
 /// A label whose abstention probability exceeds this returns no span.
 const ABSTENTION_THRESHOLD: f32 = 0.5;
 
@@ -125,6 +128,12 @@ pub fn resolve_encoder_config(model_dir: &Path, config: &Value) -> Result<Value>
 /// Split the checkpoint into the encoder map (Hugging Face `DebertaV2Model`
 /// keys, the `encoder.` prefix stripped) and the head map, dropping the
 /// tensors of the unsupported head variants.
+///
+/// An export written by mlx-vlm (`mlx_vlm.convert`, quantized or not) carries
+/// the names its `sanitize` produced (`encoder.layers.`, `.self_attn.`,
+/// `.layer_norm.`); those are mapped back to the Hugging Face names the
+/// encoder reads. The head keeps its own `layer_norm` names, so the reverse
+/// renames apply to encoder tensors only.
 pub fn sanitize(weights: WeightMap) -> (WeightMap, WeightMap) {
     let mut encoder = WeightMap::new();
     let mut head = WeightMap::new();
@@ -133,7 +142,13 @@ pub fn sanitize(weights: WeightMap) -> (WeightMap, WeightMap) {
             continue;
         }
         match key.strip_prefix("encoder.") {
-            Some(rest) => encoder.insert(rest.to_string(), value),
+            Some(rest) => {
+                let hf = rest
+                    .replace("encoder.layers.", "encoder.layer.")
+                    .replace(".attention.self_attn.", ".attention.self.")
+                    .replace(".layer_norm.", ".LayerNorm.");
+                encoder.insert(hf, value)
+            }
             None => head.insert(key, value),
         };
     }
@@ -162,10 +177,12 @@ impl Gliner2_5Model {
             None | Some(Value::Null) => DEFAULT_MAX_LEN,
             Some(value) => value
                 .as_u64()
-                .filter(|&v| v > 0)
+                .filter(|&v| v > 0 && v <= MAX_SUPPORTED_MAX_LEN as u64)
                 .map(|v| v as usize)
                 .ok_or_else(|| {
-                    anyhow::anyhow!("GLiNER2.5 max_len must be a positive integer, got {value}")
+                    anyhow::anyhow!(
+                        "GLiNER2.5 max_len must be an integer in 1..={MAX_SUPPORTED_MAX_LEN}, got {value}"
+                    )
                 })?,
         };
         let encoder_args = DebertaV2Args::from_config(&resolve_encoder_config(model_dir, config)?)?;
@@ -175,8 +192,9 @@ impl Gliner2_5Model {
         });
         let (encoder_weights, head_weights) = sanitize(load_embedding_weights(model_dir, config)?);
         let q = (quant.group_size, quant.bits);
+        let hidden_size = encoder_args.hidden_size;
         let encoder = DebertaV2Encoder::from_weights(&encoder_weights, encoder_args, q.0, q.1)?;
-        let head = BoundaryHead::from_weights(&head_weights, &settings, q)?;
+        let head = BoundaryHead::from_weights(&head_weights, &settings, hidden_size, q)?;
         let classifier_hidden = linear(&head_weights, "classifier.0", q.0, q.1)?;
         let classifier_output = linear(&head_weights, "classifier.3", q.0, q.1)?;
 
@@ -187,11 +205,18 @@ impl Gliner2_5Model {
         };
         tokenizer.with_padding(None);
         let _ = tokenizer.with_truncation(None);
-        if SPECIAL_TOKENS
-            .iter()
-            .any(|token| tokenizer.token_to_id(token).is_none())
-        {
-            bail!("checkpoint tokenizer is missing GLiNER2.5 special tokens");
+        // Each special token must be one added token, as upstream registers
+        // them: a vocabulary that merely spells `[E]` in pieces would pass a
+        // presence check and then shift every marker position.
+        for token in SPECIAL_TOKENS {
+            let whole = tokenizer.token_to_id(token).is_some_and(|id| {
+                tokenizer
+                    .encode(*token, false)
+                    .is_ok_and(|encoding| encoding.get_ids() == [id])
+            });
+            if !whole {
+                bail!("checkpoint tokenizer is missing GLiNER2.5 special tokens");
+            }
         }
         let Some(unk_id) = tokenizer.token_to_id("[UNK]") else {
             bail!("checkpoint tokenizer defines no [UNK] token");
@@ -359,6 +384,9 @@ impl SpanExtractorModel for Gliner2_5Model {
         let mut results = Map::new();
         for (task, spec) in tasks {
             let labels = spec.labels().to_vec();
+            if labels.is_empty() {
+                bail!("task '{task}' has no labels");
+            }
             let schema = schema_tokens(task, &labels, "[L]", spec.prompt(), |label| {
                 spec.label_description(label)
             });

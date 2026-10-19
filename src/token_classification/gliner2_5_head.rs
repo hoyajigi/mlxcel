@@ -26,7 +26,7 @@
 //! `[T, H]`, boundaries `[T + 1, dim]`, queries `[Q, H]`. The text and query
 //! masks of the upstream port are therefore all true and folded away.
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 use mlxcel_core::layers::{LayerNorm, UnifiedLinear};
 use mlxcel_core::weights::WeightMap;
 use mlxcel_core::{MlxArray, UniquePtr, dtype};
@@ -161,9 +161,21 @@ impl BoundaryEncoder {
     fn from_weights(
         weights: &WeightMap,
         settings: &BoundaryHeadSettings,
+        hidden_size: usize,
         q: (i32, i32),
     ) -> Result<Self> {
         let p = "boundary_head.boundary_encoder";
+        let state = |name: &str| -> Result<UniquePtr<MlxArray>> {
+            let key = format!("{p}.{name}");
+            let array = tensor(weights, &key)?;
+            let shape = mlxcel_core::array_shape(&array);
+            if shape != [hidden_size as i32] {
+                bail!(
+                    "gliner2_5: {key} is {shape:?}, expected [{hidden_size}] (the encoder hidden size)"
+                );
+            }
+            Ok(array)
+        };
         Ok(Self {
             left_projection: linear(weights, &format!("{p}.left_projection"), q.0, q.1)?,
             right_projection: linear(weights, &format!("{p}.right_projection"), q.0, q.1)?,
@@ -190,8 +202,8 @@ impl BoundaryEncoder {
                     )
                 })
                 .collect::<Result<_>>()?,
-            bos_state: tensor(weights, &format!("{p}.bos_state"))?,
-            eos_state: tensor(weights, &format!("{p}.eos_state"))?,
+            bos_state: state("bos_state")?,
+            eos_state: state("eos_state")?,
         })
     }
 
@@ -325,13 +337,16 @@ pub(crate) struct BoundaryHead {
 }
 
 impl BoundaryHead {
+    /// `hidden_size` is the encoder width the head's query and text
+    /// projections read.
     pub fn from_weights(
         weights: &WeightMap,
         settings: &BoundaryHeadSettings,
+        hidden_size: usize,
         q: (i32, i32),
     ) -> Result<Self> {
         Ok(Self {
-            boundary_encoder: BoundaryEncoder::from_weights(weights, settings, q)?,
+            boundary_encoder: BoundaryEncoder::from_weights(weights, settings, hidden_size, q)?,
             boundary_query_head: BoundaryQueryHead::from_weights(weights, settings, q)?,
             shared_pool_builder: DocumentCandidatePool::from_weights(weights, settings, q)?,
             shared_pool_scorer: SharedPoolScorer::from_weights(weights, settings, q)?,

@@ -42,9 +42,19 @@ pub enum WordSplitter {
     Char,
 }
 
+// Upstream's pattern with two deliberate edits. Python's `\w` is
+// `str.isalnum()` plus `_` (letters and numbers, no combining marks, no
+// joiners), which is `[\p{L}\p{N}_]`; the regex crate's `\w` also matches
+// marks and join controls, so Devanagari, Persian ZWNJ and `x²` would split
+// differently from the model's training. The e-mail branch is bounded to the
+// RFC 5321 lengths (64 / 253) because its unbounded run before the `@` rescans
+// the rest of a long `a.a.a...` run on every word, which is quadratic in the
+// text (upstream has the same cost); only addresses that are invalid anyway
+// match differently. Both patterns are literals, so a compile failure is a
+// programming error, not an input error.
 static WHITESPACE_WORDS: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
-        r"(?i)(?:https?://[^\s]+|www\.[^\s]+)|[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}|@[a-z0-9_]+|\w+(?:[-_]\w+)*|\S",
+        r"(?i)(?:https?://[^\s]+|www\.[^\s]+)|[a-z0-9._%+-]{1,64}@[a-z0-9.-]{1,253}\.[a-z]{2,}|@[a-z0-9_]+|[\p{L}\p{N}_]+(?:[-_][\p{L}\p{N}_]+)*|\S",
     )
     .expect("whitespace word pattern compiles")
 });
@@ -95,7 +105,8 @@ pub fn schema_tokens<'a>(
     prompt: Option<&str>,
     description: impl Fn(&str) -> Option<&'a str>,
 ) -> Vec<String> {
-    let mut prompt_text = match prompt {
+    // An empty prompt falls back to the bare parent, as upstream's `if prompt`.
+    let mut prompt_text = match prompt.filter(|prompt| !prompt.is_empty()) {
         Some(prompt) => format!("{parent}: {prompt}"),
         None => parent.to_string(),
     };
@@ -143,9 +154,12 @@ pub struct PreparedInput {
 
 /// Tokenize `text` without special tokens, as `PreTrainedTokenizerFast.tokenize`.
 fn pieces(tokenizer: &Tokenizer, text: &str) -> Result<Vec<u32>> {
-    let encoding = tokenizer
-        .encode(text, false)
-        .map_err(|e| anyhow::anyhow!("GLiNER2.5 tokenization of {text:?} failed: {e}"))?;
+    let encoding = tokenizer.encode(text, false).map_err(|e| {
+        anyhow::anyhow!(
+            "GLiNER2.5 tokenization of a {}-char piece failed: {e}",
+            text.chars().count()
+        )
+    })?;
     Ok(encoding.get_ids().to_vec())
 }
 
@@ -195,6 +209,13 @@ pub fn prepare(
     if offsets.is_empty() {
         bail!("no text tokens fit within max_len");
     }
+    if offsets.len() < words.len() {
+        tracing::warn!(
+            "GLiNER2.5: only the first {} of {} words fit within max_len {max_len}; the rest of the text is not scored",
+            offsets.len(),
+            words.len()
+        );
+    }
     Ok(PreparedInput {
         input_ids,
         word_positions,
@@ -221,13 +242,14 @@ pub fn resolve_flat_overlaps(spans: &[ScoredSpan]) -> Vec<ScoredSpan> {
     ordered.sort_by(|a, b| a.2.cmp(&b.2).then(a.1.cmp(&b.1)).then(b.0.total_cmp(&a.0)));
     let ends: Vec<usize> = ordered.iter().map(|span| span.2).collect();
     // `best[i]` is the best total over the first `i` candidates and which
-    // ones it keeps.
-    let mut best: Vec<(f32, Vec<usize>)> = vec![(0.0, Vec::new())];
+    // ones it keeps. Totals accumulate in f64, as Python floats do, so a
+    // near-tie resolves the same way as upstream.
+    let mut best: Vec<(f64, Vec<usize>)> = vec![(0.0, Vec::new())];
     for (index, span) in ordered.iter().enumerate() {
         // Rightmost earlier candidate ending at or before this start.
         let predecessor = ends[..index].partition_point(|&end| end <= span.1);
         let (previous_score, previous) = &best[predecessor];
-        let selected_score = previous_score + span.0;
+        let selected_score = previous_score + f64::from(span.0);
         let skipped = &best[index];
         if selected_score > skipped.0 {
             let mut kept = previous.clone();

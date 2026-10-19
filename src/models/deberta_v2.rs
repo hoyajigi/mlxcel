@@ -246,7 +246,12 @@ impl DebertaV2Encoder {
         group_size: i32,
         bits: i32,
     ) -> Result<Self> {
-        let activation = Activation::from_name(&args.hidden_act)?;
+        let activation = Activation::from_name(&args.hidden_act).map_err(|e| {
+            anyhow::anyhow!(
+                "deberta-v2 config: {}",
+                e.to_string().trim_start_matches("bert config: ")
+            )
+        })?;
         let embedding = |prefix: &str| {
             UnifiedEmbedding::from_weights(weights, prefix, group_size, bits)
                 .map_err(|e| anyhow::anyhow!("deberta-v2: {e}"))
@@ -260,6 +265,15 @@ impl DebertaV2Encoder {
                  position buckets address",
                 args.position_buckets
             );
+        }
+        if !rel_embeddings.is_quantized() {
+            let width = mlxcel_core::array_shape(rel_embeddings.weight())[1] as usize;
+            if width != args.hidden_size {
+                bail!(
+                    "deberta-v2: encoder.rel_embeddings is {width} wide, not hidden_size {}",
+                    args.hidden_size
+                );
+            }
         }
         let rel_norm = args
             .norm_rel_ebd

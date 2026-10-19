@@ -160,6 +160,11 @@ fn non_boundary_architectures_are_refused() {
 #[test]
 fn unsupported_head_settings_are_refused() {
     for (key, value, needle) in [
+        ("pool_boundary_top_k", json!(4096), "exceeds 1024"),
+        ("pool_size", json!(1u64 << 40), "in 0..="),
+        ("boundary_dim", json!(-1), "in 0..="),
+        ("boundary_ffn_multiplier", json!(0.0), "positive number"),
+        ("boundary_attention_heads", json!(3), "not divisible"),
         (
             "candidate_pool",
             json!("per_query"),
@@ -229,6 +234,48 @@ fn sanitize_splits_encoder_from_head_and_drops_unsupported_tensors() {
 }
 
 #[test]
+fn sanitize_maps_an_mlx_vlm_export_back_to_hugging_face_names() {
+    let mut weights = mlxcel_core::weights::WeightMap::new();
+    for key in [
+        "encoder.embeddings.layer_norm.weight",
+        "encoder.encoder.layer_norm.bias",
+        "encoder.encoder.layers.3.attention.self_attn.key_proj.scales",
+        "encoder.encoder.layers.3.attention.output.layer_norm.weight",
+        "encoder.encoder.layers.3.output.layer_norm.bias",
+        "boundary_head.boundary_encoder.layer_norm.weight",
+        "boundary_head.shared_pool_scorer.content_pooler.layer_norm.bias",
+    ] {
+        weights.insert(
+            key.to_string(),
+            mlxcel_core::zeros(&[1], mlxcel_core::dtype::FLOAT32),
+        );
+    }
+    let (encoder, head) = sanitize(weights);
+    let mut encoder_keys: Vec<_> = encoder.keys().cloned().collect();
+    encoder_keys.sort();
+    assert_eq!(
+        encoder_keys,
+        [
+            "embeddings.LayerNorm.weight",
+            "encoder.LayerNorm.bias",
+            "encoder.layer.3.attention.output.LayerNorm.weight",
+            "encoder.layer.3.attention.self.key_proj.scales",
+            "encoder.layer.3.output.LayerNorm.bias",
+        ]
+    );
+    let mut head_keys: Vec<_> = head.keys().cloned().collect();
+    head_keys.sort();
+    assert_eq!(
+        head_keys,
+        [
+            "boundary_head.boundary_encoder.layer_norm.weight",
+            "boundary_head.shared_pool_scorer.content_pooler.layer_norm.bias",
+        ],
+        "the head keeps its own layer_norm names"
+    );
+}
+
+#[test]
 fn schema_tokens_match_upstream() {
     let labels = ["company", "person"].map(str::to_string);
     assert_eq!(
@@ -236,6 +283,11 @@ fn schema_tokens_match_upstream() {
         [
             "(", "[P]", "entities", "(", "[E]", "company", "[E]", "person", ")", ")"
         ]
+    );
+    assert_eq!(
+        schema_tokens("entities", &labels, "[E]", Some(""), |_| None)[2],
+        "entities",
+        "an empty prompt falls back to the parent, as upstream's `if prompt`"
     );
     let described = schema_tokens("sentiment", &labels, "[L]", Some("the tone"), |label| {
         (label == "person").then_some("a human")
@@ -292,6 +344,46 @@ fn word_splitting_keeps_urls_emails_and_handles_whole() {
     let whitespace_cjk = split_words("东京大学 Tokyo", WordSplitter::Whitespace);
     let texts: Vec<&str> = whitespace_cjk.iter().map(|w| w.text.as_str()).collect();
     assert_eq!(texts, ["东京大学", "tokyo"]);
+}
+
+/// Python's `\w` is `isalnum() + _`: combining marks and joiners are not
+/// word characters (each becomes its own `\S` word) and `No` digits are. The
+/// expected values are Python 3 `re.finditer` outputs on upstream's pattern.
+#[test]
+fn word_splitting_matches_python_word_characters() {
+    let words = |text: &str| -> Vec<(String, usize, usize)> {
+        split_words(text, WordSplitter::Whitespace)
+            .into_iter()
+            .map(|w| (w.text, w.start, w.end))
+            .collect()
+    };
+    let devanagari = words("हिन्दी भाषा");
+    assert_eq!(devanagari.len(), 10, "{devanagari:?}");
+    assert_eq!(devanagari[0], ("ह".to_string(), 0, 1));
+    assert_eq!(devanagari[1], ("ि".to_string(), 1, 2));
+    assert_eq!(devanagari[6], ("भ".to_string(), 7, 8));
+    let persian = words("می\u{200c}خواهم");
+    assert_eq!(
+        persian,
+        [
+            ("می".to_string(), 0, 2),
+            ("\u{200c}".to_string(), 2, 3),
+            ("خواهم".to_string(), 3, 8)
+        ]
+    );
+    assert_eq!(words("x²"), [("x²".to_string(), 0, 2)]);
+    assert_eq!(
+        words("e\u{301}"),
+        [("e".to_string(), 0, 1), ("\u{301}".to_string(), 1, 2)]
+    );
+    assert_eq!(words("café"), [("café".to_string(), 0, 4)]);
+    // The bounded e-mail branch no longer rescans a long dotted run on every
+    // word; the quadratic form took seconds here.
+    let long_run = "a.".repeat(5000);
+    let started = std::time::Instant::now();
+    let run = split_words(&long_run, WordSplitter::Whitespace);
+    assert_eq!(run.len(), 10000);
+    assert!(started.elapsed().as_secs() < 5, "{:?}", started.elapsed());
 }
 
 #[test]

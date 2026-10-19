@@ -15,7 +15,7 @@ Writes three files into ``<fixture dir>``:
   compares mlxcel against it.
 - ``deberta_v2_layer_fixture.json``: a tiny random DeBERTa-v2 encoder (its
   weights are in the file) run through mlx-vlm's ``DebertaModel``, and the
-  Hugging Face ``build_relative_position`` buckets for lengths 8 and 600.
+  Hugging Face ``build_relative_position`` buckets for lengths 8, 600 and 4096.
   ``src/models/deberta_v2_tests.rs`` checks the encoder against both.
 - ``deberta_v2_hf_long.json``: ``transformers`` ``DebertaV2Model`` hidden
   states of the real encoder on an input longer than 128 tokens, where
@@ -310,6 +310,7 @@ def deberta_layer_fixture() -> dict:
             "(position_buckets 256, max_relative_positions -1 -> max_position_embeddings 512)",
             "8": buckets(8),
             "600": buckets(600),
+            "4096": buckets(4096),
         },
     }
 
