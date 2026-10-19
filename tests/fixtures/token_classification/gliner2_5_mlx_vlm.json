@@ -1,0 +1,819 @@
+{
+ "oracle": {
+  "mlx_vlm": "mlx-vlm 0.7.8 (git 73d366ecf9233b3fc6549531a7f2386726d09ff6)",
+  "mlx": "0.32.4",
+  "model": "fastino/gliner2.5-small-v1",
+  "note": "config.json architectures patched to [\"BoundaryExtractor\"] in a temporary copy so mlx-vlm's loader recognizes the checkpoint; weights are float32 and the model ran in float32"
+ },
+ "cases": [
+  {
+   "name": "readme",
+   "kind": "extract",
+   "text": "Apple hired Sam in New York.",
+   "labels": [
+    "company",
+    "person",
+    "location"
+   ],
+   "descriptions": null,
+   "word_splitter": "whitespace",
+   "options": {
+    "include_confidence": true,
+    "include_spans": true
+   },
+   "prepared": {
+    "input_ids": [
+     287,
+     128003,
+     6967,
+     287,
+     128005,
+     483,
+     128005,
+     604,
+     128005,
+     1250,
+     1263,
+     1263,
+     128002,
+     6038,
+     5458,
+     20782,
+     267,
+     353,
+     23031,
+     323
+    ],
+    "word_positions": [
+     13,
+     14,
+     15,
+     16,
+     17,
+     18,
+     19
+    ],
+    "marker_positions": [
+     1,
+     4,
+     6,
+     8
+    ],
+    "offsets": [
+     [
+      0,
+      5
+     ],
+     [
+      6,
+      11
+     ],
+     [
+      12,
+      15
+     ],
+     [
+      16,
+      18
+     ],
+     [
+      19,
+      22
+     ],
+     [
+      23,
+      27
+     ],
+     [
+      27,
+      28
+     ]
+    ],
+    "text": "Apple hired Sam in New York."
+   },
+   "result": {
+    "entities": {
+     "company": [
+      {
+       "text": "Apple",
+       "confidence": 0.9993299245834351,
+       "start": 0,
+       "end": 5
+      }
+     ],
+     "person": [
+      {
+       "text": "Sam",
+       "confidence": 0.9904677271842957,
+       "start": 12,
+       "end": 15
+      }
+     ],
+     "location": [
+      {
+       "text": "New York",
+       "confidence": 0.999485433101654,
+       "start": 19,
+       "end": 27
+      }
+     ]
+    }
+   }
+  },
+  {
+   "name": "readme_plain",
+   "kind": "extract",
+   "text": "Apple hired Sam in New York.",
+   "labels": [
+    "company",
+    "person",
+    "location"
+   ],
+   "descriptions": null,
+   "word_splitter": "whitespace",
+   "options": {},
+   "prepared": {
+    "input_ids": [
+     287,
+     128003,
+     6967,
+     287,
+     128005,
+     483,
+     128005,
+     604,
+     128005,
+     1250,
+     1263,
+     1263,
+     128002,
+     6038,
+     5458,
+     20782,
+     267,
+     353,
+     23031,
+     323
+    ],
+    "word_positions": [
+     13,
+     14,
+     15,
+     16,
+     17,
+     18,
+     19
+    ],
+    "marker_positions": [
+     1,
+     4,
+     6,
+     8
+    ],
+    "offsets": [
+     [
+      0,
+      5
+     ],
+     [
+      6,
+      11
+     ],
+     [
+      12,
+      15
+     ],
+     [
+      16,
+      18
+     ],
+     [
+      19,
+      22
+     ],
+     [
+      23,
+      27
+     ],
+     [
+      27,
+      28
+     ]
+    ],
+    "text": "Apple hired Sam in New York."
+   },
+   "result": {
+    "entities": {
+     "company": [
+      "Apple"
+     ],
+     "person": [
+      "Sam"
+     ],
+     "location": [
+      "New York"
+     ]
+    }
+   }
+  },
+  {
+   "name": "readme_described",
+   "kind": "extract",
+   "text": "Apple hired Sam in New York.",
+   "labels": [
+    "company",
+    "person",
+    "location"
+   ],
+   "descriptions": {
+    "company": "a business or corporation",
+    "person": "a human being",
+    "location": "a city, state or country"
+   },
+   "word_splitter": "whitespace",
+   "options": {
+    "include_confidence": true,
+    "include_spans": true
+   },
+   "prepared": {
+    "input_ids": [
+     287,
+     128003,
+     6967,
+     128010,
+     483,
+     294,
+     266,
+     460,
+     289,
+     7006,
+     128010,
+     604,
+     294,
+     266,
+     857,
+     411,
+     128010,
+     1250,
+     294,
+     266,
+     707,
+     261,
+     565,
+     289,
+     658,
+     287,
+     128005,
+     483,
+     128005,
+     604,
+     128005,
+     1250,
+     1263,
+     1263,
+     128002,
+     6038,
+     5458,
+     20782,
+     267,
+     353,
+     23031,
+     323
+    ],
+    "word_positions": [
+     35,
+     36,
+     37,
+     38,
+     39,
+     40,
+     41
+    ],
+    "marker_positions": [
+     1,
+     26,
+     28,
+     30
+    ],
+    "offsets": [
+     [
+      0,
+      5
+     ],
+     [
+      6,
+      11
+     ],
+     [
+      12,
+      15
+     ],
+     [
+      16,
+      18
+     ],
+     [
+      19,
+      22
+     ],
+     [
+      23,
+      27
+     ],
+     [
+      27,
+      28
+     ]
+    ],
+    "text": "Apple hired Sam in New York."
+   },
+   "result": {
+    "entities": {
+     "company": [
+      {
+       "text": "Apple",
+       "confidence": 0.9985553622245789,
+       "start": 0,
+       "end": 5
+      }
+     ],
+     "person": [
+      {
+       "text": "Sam",
+       "confidence": 0.9963136315345764,
+       "start": 12,
+       "end": 15
+      }
+     ],
+     "location": [
+      {
+       "text": "New York",
+       "confidence": 0.9994643926620483,
+       "start": 19,
+       "end": 27
+      }
+     ]
+    }
+   }
+  },
+  {
+   "name": "email_url_unterminated",
+   "kind": "extract",
+   "text": "Contact ada.lovelace@example.com or visit https://example.com/team today",
+   "labels": [
+    "email",
+    "url",
+    "date"
+   ],
+   "descriptions": null,
+   "word_splitter": "whitespace",
+   "options": {
+    "include_confidence": true,
+    "include_spans": true
+   },
+   "prepared": {
+    "input_ids": [
+     287,
+     128003,
+     6967,
+     287,
+     128005,
+     871,
+     128005,
+     20030,
+     128005,
+     1043,
+     1263,
+     1263,
+     128002,
+     789,
+     266,
+     3896,
+     260,
+     10439,
+     36258,
+     1683,
+     28748,
+     260,
+     549,
+     289,
+     836,
+     3597,
+     294,
+     320,
+     320,
+     28748,
+     260,
+     549,
+     320,
+     12900,
+     561
+    ],
+    "word_positions": [
+     13,
+     14,
+     23,
+     24,
+     25,
+     34
+    ],
+    "marker_positions": [
+     1,
+     4,
+     6,
+     8
+    ],
+    "offsets": [
+     [
+      0,
+      7
+     ],
+     [
+      8,
+      32
+     ],
+     [
+      33,
+      35
+     ],
+     [
+      36,
+      41
+     ],
+     [
+      42,
+      66
+     ],
+     [
+      67,
+      72
+     ]
+    ],
+    "text": "Contact ada.lovelace@example.com or visit https://example.com/team today."
+   },
+   "result": {
+    "entities": {
+     "email": [
+      {
+       "text": "ada.lovelace@example.com",
+       "confidence": 0.9899170994758606,
+       "start": 8,
+       "end": 32
+      }
+     ],
+     "url": [
+      {
+       "text": "https://example.com/team",
+       "confidence": 0.6229300498962402,
+       "start": 42,
+       "end": 66
+      }
+     ],
+     "date": [
+      {
+       "text": "today",
+       "confidence": 0.9300386309623718,
+       "start": 67,
+       "end": 72
+      }
+     ]
+    }
+   }
+  },
+  {
+   "name": "cjk_char",
+   "kind": "extract",
+   "text": "东京大学的田中教授访问了北京。",
+   "labels": [
+    "organization",
+    "person",
+    "location"
+   ],
+   "descriptions": null,
+   "word_splitter": "char",
+   "options": {
+    "include_confidence": true,
+    "include_spans": true
+   },
+   "prepared": {
+    "input_ids": [
+     287,
+     128003,
+     6967,
+     287,
+     128005,
+     1416,
+     128005,
+     604,
+     128005,
+     1250,
+     1263,
+     1263,
+     128002,
+     507,
+     122697,
+     507,
+     118398,
+     110344,
+     507,
+     46564,
+     507,
+     9301,
+     507,
+     98576,
+     507,
+     29575,
+     507,
+     86769,
+     507,
+     123917,
+     507,
+     124106,
+     507,
+     123087,
+     507,
+     46050,
+     507,
+     105687,
+     507,
+     118398,
+     507,
+     10548
+    ],
+    "word_positions": [
+     13,
+     15,
+     17,
+     18,
+     20,
+     22,
+     24,
+     26,
+     28,
+     30,
+     32,
+     34,
+     36,
+     38,
+     40
+    ],
+    "marker_positions": [
+     1,
+     4,
+     6,
+     8
+    ],
+    "offsets": [
+     [
+      0,
+      1
+     ],
+     [
+      1,
+      2
+     ],
+     [
+      2,
+      3
+     ],
+     [
+      3,
+      4
+     ],
+     [
+      4,
+      5
+     ],
+     [
+      5,
+      6
+     ],
+     [
+      6,
+      7
+     ],
+     [
+      7,
+      8
+     ],
+     [
+      8,
+      9
+     ],
+     [
+      9,
+      10
+     ],
+     [
+      10,
+      11
+     ],
+     [
+      11,
+      12
+     ],
+     [
+      12,
+      13
+     ],
+     [
+      13,
+      14
+     ],
+     [
+      14,
+      15
+     ]
+    ],
+    "text": "东京大学的田中教授访问了北京。."
+   },
+   "result": {
+    "entities": {
+     "organization": [],
+     "person": [
+      {
+       "text": "田",
+       "confidence": 0.7877364158630371,
+       "start": 5,
+       "end": 6
+      }
+     ],
+     "location": []
+    }
+   }
+  },
+  {
+   "name": "sentiment",
+   "kind": "classify",
+   "text": "The launch was excellent.",
+   "tasks": {
+    "sentiment": [
+     "positive",
+     "neutral",
+     "negative"
+    ]
+   },
+   "prepared": {
+    "sentiment": {
+     "input_ids": [
+      287,
+      128003,
+      9481,
+      287,
+      128007,
+      1453,
+      128007,
+      5678,
+      128007,
+      2330,
+      1263,
+      1263,
+      128002,
+      262,
+      2529,
+      284,
+      1390,
+      323
+     ],
+     "word_positions": [
+      13,
+      14,
+      15,
+      16,
+      17
+     ],
+     "marker_positions": [
+      1,
+      4,
+      6,
+      8
+     ],
+     "offsets": [
+      [
+       0,
+       3
+      ],
+      [
+       4,
+       10
+      ],
+      [
+       11,
+       14
+      ],
+      [
+       15,
+       24
+      ],
+      [
+       24,
+       25
+      ]
+     ],
+     "text": "The launch was excellent."
+    }
+   },
+   "result": {
+    "sentiment": "positive"
+   }
+  },
+  {
+   "name": "sentiment_spec",
+   "kind": "classify",
+   "text": "The launch was excellent.",
+   "tasks": {
+    "sentiment": {
+     "labels": [
+      "positive",
+      "neutral",
+      "negative"
+     ],
+     "prompt": "the overall tone of the text",
+     "label_descriptions": {
+      "positive": "a favourable opinion"
+     },
+     "multi_label": true,
+     "threshold": 0.3
+    }
+   },
+   "prepared": {
+    "sentiment": {
+     "input_ids": [
+      287,
+      128003,
+      9481,
+      294,
+      262,
+      1629,
+      4063,
+      265,
+      262,
+      1529,
+      128010,
+      1453,
+      294,
+      266,
+      23166,
+      2221,
+      287,
+      128007,
+      1453,
+      128007,
+      5678,
+      128007,
+      2330,
+      1263,
+      1263,
+      128002,
+      262,
+      2529,
+      284,
+      1390,
+      323
+     ],
+     "word_positions": [
+      26,
+      27,
+      28,
+      29,
+      30
+     ],
+     "marker_positions": [
+      1,
+      17,
+      19,
+      21
+     ],
+     "offsets": [
+      [
+       0,
+       3
+      ],
+      [
+       4,
+       10
+      ],
+      [
+       11,
+       14
+      ],
+      [
+       15,
+       24
+      ],
+      [
+       24,
+       25
+      ]
+     ],
+     "text": "The launch was excellent."
+    }
+   },
+   "result": {
+    "sentiment": [
+     "positive"
+    ]
+   }
+  }
+ ]
+}

@@ -17,8 +17,9 @@ There is no HTTP route for either shape yet. mlx-vlm, the reference implementati
 |---|---|---|---|---|
 | BERT / XLM-RoBERTa token classifier | `model_type` `bert`, `xlm-roberta` or `xlm_roberta`, `architectures[0]` ending in `ForTokenClassification`, non-empty `id2label` | `bert_token_classifier` | per-token argmax | [`nativ-community/rampart-mlx-fp16`](https://huggingface.co/nativ-community/rampart-mlx-fp16), [`nativ-community/rampart-mlx-4bit`](https://huggingface.co/nativ-community/rampart-mlx-4bit) |
 | OpenAI Privacy Filter | `model_type` `openai_privacy_filter`, non-empty `id2label` | `openai_privacy_filter` | constrained BIOES Viterbi (default), per-token argmax with `--argmax` | [`mlx-community/openai-privacy-filter-bf16`](https://huggingface.co/mlx-community/openai-privacy-filter-bf16), [`mlx-community/openai-privacy-filter-8bit`](https://huggingface.co/mlx-community/openai-privacy-filter-8bit) |
+| GLiNER2.5 span extractor | `model_type` `gliner2` or `gliner2_5`, or `architectures` naming `Gliner2ForSchemaExtraction` or `BoundaryExtractor`; `architecture` `boundary` | `gliner2_5` | sigmoid span scores over a shared candidate pool, overlaps resolved per label | [`fastino/gliner2.5-small-v1`](https://huggingface.co/fastino/gliner2.5-small-v1) |
 
-No span-extraction family is implemented yet; `mlxcel extract` currently refuses every checkpoint, and GLiNER2.5 is the planned first one.
+GLiNER2.5 is the first span-extraction family; see [GLiNER2.5](#gliner25) under `mlxcel extract`.
 
 Detection for these commands reads `config.json` only and is separate from the generation, `/v1/embeddings` and `/v1/rerank` dispatch, which is unchanged. In particular `mlxcel embed` still loads a `BertForTokenClassification` checkpoint as a BERT embedder (its `model_type` is encoder-only), exactly as before this feature existed.
 
@@ -112,9 +113,19 @@ Parity with mlx-vlm 0.7.8 (`tests/fixtures/token_classification/privacy_filter_m
 ## `mlxcel extract`
 
 ```sh
-mlxcel extract -m <MODEL> --labels person,company "Ada Lovelace worked with Charles Babbage."
-mlxcel extract -m <MODEL> --labels-json '{"person": "a human name", "company": null}' --include-confidence --include-spans "..."
-mlxcel extract -m <MODEL> --classify '{"sentiment": ["positive", "negative"], "topics": {"labels": ["tech", "sports"], "multi_label": true, "threshold": 0.3}}' "..."
+mlxcel extract -m fastino/gliner2.5-small-v1 --labels company,person,location --include-confidence --include-spans "Apple hired Sam in New York."
+mlxcel extract -m fastino/gliner2.5-small-v1 --labels-json '{"person": "a human name", "company": null}' "Ada Lovelace worked with Charles Babbage."
+mlxcel extract -m fastino/gliner2.5-small-v1 --classify '{"sentiment": ["positive", "neutral", "negative"], "topics": {"labels": ["tech", "sports"], "multi_label": true, "threshold": 0.3}}' "The launch was excellent."
+```
+
+```json
+{
+  "entities": {
+    "company": [{"text": "Apple", "confidence": 0.9993, "start": 0, "end": 5}],
+    "person": [{"text": "Sam", "confidence": 0.9905, "start": 12, "end": 15}],
+    "location": [{"text": "New York", "confidence": 0.9995, "start": 19, "end": 27}]
+  }
+}
 ```
 
 Exactly one of `--labels`, `--labels-json` and `--classify` is required. `--threshold` (default 0.5, between 0 and 1) is the minimum entity score and the default multi-label threshold. `--include-confidence` and `--include-spans` apply to entity extraction only.
@@ -123,9 +134,21 @@ Entity output follows mlx-vlm's GLiNER2.5 `extract_entities`: `{"entities": {"<l
 
 A token-classification checkpoint passed to `mlxcel extract` fails before its weights load, naming `mlxcel tag`.
 
+### GLiNER2.5
+
+[GLiNER2.5](https://huggingface.co/fastino/gliner2.5-small-v1) (Fastino) is a DeBERTa-v3 encoder with a *boundary head*: the labels of a request are encoded together with the text, and a span is scored by its start and end boundaries, its content and the label query, without generation. `src/token_classification/gliner2_5.rs` ports mlx-vlm's `mlx_vlm/models/gliner2_5` (`gliner2_5.py`, `boundary.py`); the encoder is the reusable `src/models/deberta_v2.rs`.
+
+**Detection.** The live `fastino/gliner2.5-small-v1` `config.json` declares `model_type: gliner2` and `architectures: ["Gliner2ForSchemaExtraction"]`, which mlx-vlm's loader does not map (it keys on `BoundaryExtractor`); mlxcel accepts `model_type` `gliner2` or `gliner2_5` and either architecture. `architecture` must be `boundary` (it may be absent only on a `BoundaryExtractor` export); any other head fails with `GLiNER2 architecture '<a>' is not supported; only the boundary extractor is`. The encoder config is read inline from `encoder_config`, else from `encoder_config/config.json`, else the load fails naming that file. As upstream, a `candidate_pool` other than `shared`, `candidate_attention_layers` or `query_attention_layers` above 0 are refused at load, and the `boundary_proposer`, `pair_scorer`, `candidate_encoder`, `record_decoder` and `relation_scorer` tensors (relation and record extraction) are dropped. Weights load in the checkpoint's own dtype (`gliner2.5-small-v1` ships float32 tensors and runs in float32, as it does in mlx-vlm).
+
+**Input.** The sequence is `( [P] <prompt> ( [E] label ... ) ) [SEP_TEXT]` followed by the sub-tokens of each word, where the prompt is `entities` for extraction (the task name for classification, `"<task>: <prompt>"` when the task gives one) plus ` [DESCRIPTION] <label>: <description>` for every described label; classification uses `[L]` markers. The tokenizer must already define `[SEP_TEXT]`, `[P]`, `[E]`, `[L]` and `[DESCRIPTION]`, else the load fails with `checkpoint tokenizer is missing GLiNER2.5 special tokens`. Words come from upstream's regex (URLs, e-mail addresses and `@handles` stay whole, `\w+` runs may be joined by `-` or `_`, any other non-space character is a word), lower-cased; a word with no sub-token becomes `[UNK]`. Words are added until the next one would exceed `max_len` (4096 by default); a schema that alone reaches `max_len` fails with `schema alone exceeds max_len`, and a text none of whose words fit with `no text tokens fit within max_len`. A text not ending in `.`, `!` or `?` gets a `.` appended before offsets are reported. Each call encodes one sequence; the batch API and the `char` word splitter of the Python model (every non-ASCII character its own word, for scripts without spacing) exist on `Gliner2_5Model` but have no CLI flag yet.
+
+**Decoding.** Span logits go through a sigmoid; a label whose abstention logit exceeds 0.5 after the sigmoid returns nothing. Candidates at or above `--threshold` with a valid word range are resolved per label by upstream's weighted-interval dynamic program (`_resolve_flat_overlaps`), keeping the non-overlapping set with the largest total score, listed by descending score, then start, then end. Character offsets are Unicode scalar indices into the (possibly `.`-terminated) text. `--classify` runs one sequence per task, takes the sigmoid of the classifier over the label markers and returns the best label, or every label at or above the task threshold when `multi_label` is set.
+
+**Parity.** `tests/fixtures/token_classification/gliner2_5_mlx_vlm.json` (written by `generate_gliner2_5_fixture.py` with mlx-vlm 0.7.8 at git `73d366ec`) holds the README extraction example with and without label descriptions, an e-mail / URL text without terminal punctuation, a CJK text under the `char` splitter, and two classification tasks; mlxcel reproduces the input ids, word and marker positions, spans and offsets exactly and the confidences within 1e-3. Every fixture case is under 128 tokens because mlx-vlm's DeBERTa leaves relative positions unbucketed when `max_relative_positions` is -1 and clips them, where Hugging Face log-buckets them; mlxcel follows Hugging Face, and `src/models/deberta_v2_tests.rs` checks a 306-token input against `transformers` `DebertaV2Model` (fixture `deberta_v2_hf_long.json`), where mlx-vlm's hidden states differ from `transformers` by up to 7e-2. On CUDA the encoder ends a graph after every layer: captured as one graph, the first execution of a fresh capture intermittently returned wrong states on GB10 (the disentangled position gathers are the trigger; see the comment in `DebertaV2Layer::forward`), and the same test asserts that an encode and its replay agree bit for bit. `mlxcel generate -m <gliner>` fails with `GLiNER2.5 is a span extractor; use \`mlxcel extract\``.
+
 ## Adding a family
 
 1. Add a `TokenModelKind` variant with its `as_str`, `description` and `output_shape` arms in `src/token_classification/loader.rs`.
 2. Add a detector function to `DETECTORS` there (config only, returning `Ok(None)` for configs it does not claim).
 3. Implement `TokenClassifierModel` (fixed labels; `log_probs` gets one wrapped window and returns one row per id, and `decode_modes()[0]` is the default) or `SpanExtractorModel`, and add the loader arm in `load_token_classifier` or `load_span_extractor`.
-4. Add a real-checkpoint test against a fixture produced by the reference implementation, as `src/token_classification/real_checkpoint_tests.rs` does for Rampart with `tests/fixtures/token_classification/generate_rampart_spans.py` and `src/token_classification/privacy_filter_checkpoint_tests.rs` does for Privacy Filter with `generate_privacy_filter_fixture.py`.
+4. Add a real-checkpoint test against a fixture produced by the reference implementation, as `src/token_classification/real_checkpoint_tests.rs` does for Rampart with `tests/fixtures/token_classification/generate_rampart_spans.py`, `src/token_classification/privacy_filter_checkpoint_tests.rs` does for Privacy Filter with `generate_privacy_filter_fixture.py`, and `src/token_classification/gliner2_5_checkpoint_tests.rs` does for GLiNER2.5 with `generate_gliner2_5_fixture.py`.

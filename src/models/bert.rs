@@ -273,7 +273,7 @@ pub enum Activation {
 }
 
 impl Activation {
-    fn from_name(name: &str) -> Result<Self> {
+    pub(crate) fn from_name(name: &str) -> Result<Self> {
         match name.trim().to_ascii_lowercase().as_str() {
             "gelu" | "gelu_python" => Ok(Self::Gelu),
             "gelu_new" | "gelu_fast" | "gelu_pytorch_tanh" => Ok(Self::GeluTanh),
@@ -285,7 +285,7 @@ impl Activation {
         }
     }
 
-    fn apply(&self, x: &MlxArray) -> UniquePtr<MlxArray> {
+    pub(crate) fn apply(&self, x: &MlxArray) -> UniquePtr<MlxArray> {
         match self {
             Self::Gelu => mlxcel_core::gelu(x),
             Self::GeluTanh => gelu_tanh(x),

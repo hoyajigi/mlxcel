@@ -262,15 +262,16 @@ enum Commands {
 
     /// Extract spans for labels chosen per request, or classify the text.
     ///
-    /// For span-extraction checkpoints (GLiNER2.5-style) that take their
-    /// labels with every request. A token-classification checkpoint is
-    /// refused with a pointer to `mlxcel tag`.
+    /// For span-extraction checkpoints (GLiNER2.5, e.g.
+    /// `fastino/gliner2.5-small-v1`) that take their labels with every
+    /// request, as `mlx_vlm.models.gliner2_5` does. A token-classification
+    /// checkpoint is refused with a pointer to `mlxcel tag`.
     ///
     /// Examples:
     ///
-    ///     mlxcel extract -m <MODEL> --labels person,company "Ada Lovelace worked with Charles Babbage."
-    ///     mlxcel extract -m <MODEL> --labels-json '{"person": "a human name"}' --include-spans "..."
-    ///     mlxcel extract -m <MODEL> --classify '{"sentiment": ["positive", "negative"]}' "I love it."
+    ///     mlxcel extract -m fastino/gliner2.5-small-v1 --labels company,person,location --include-confidence --include-spans "Apple hired Sam in New York."
+    ///     mlxcel extract -m fastino/gliner2.5-small-v1 --labels-json '{"person": "a human name"}' "Ada Lovelace worked with Charles Babbage."
+    ///     mlxcel extract -m fastino/gliner2.5-small-v1 --classify '{"sentiment": ["positive", "neutral", "negative"]}' "The launch was excellent."
     #[command(verbatim_doc_comment)]
     Extract(commands::ExtractArgs),
 

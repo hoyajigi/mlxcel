@@ -37,6 +37,12 @@
 
 pub mod bert;
 pub mod extract;
+pub mod gliner2_5;
+mod gliner2_5_head;
+mod gliner2_5_layers;
+mod gliner2_5_pool;
+pub mod gliner2_5_prepare;
+mod gliner2_5_scorer;
 pub mod loader;
 pub mod privacy_filter;
 pub mod spans;

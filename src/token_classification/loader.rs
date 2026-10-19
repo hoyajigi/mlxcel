@@ -30,6 +30,7 @@ use serde_json::Value;
 use crate::embeddings::loader::read_embedding_config;
 
 use super::bert::BertTokenTagger;
+use super::gliner2_5::{self, Gliner2_5Model};
 use super::privacy_filter::{DEFAULT_OPERATING_POINT, PrivacyFilterTagger};
 use super::{SpanExtractorModel, TokenClassifier, TokenClassifierModel};
 
@@ -68,16 +69,24 @@ pub enum TokenModelKind {
     /// OpenAI Privacy Filter (`model_type` `openai_privacy_filter`), a BIOES
     /// PII tagger decoded with a calibrated Viterbi pass.
     PrivacyFilter,
+    /// GLiNER2.5 (`model_type` `gliner2` / `gliner2_5`), a DeBERTa-v3 span
+    /// extractor with request-time labels.
+    Gliner2_5,
 }
 
 impl TokenModelKind {
     /// Every kind, for listing what a subcommand supports.
-    pub const ALL: &'static [Self] = &[Self::BertTokenClassifier, Self::PrivacyFilter];
+    pub const ALL: &'static [Self] = &[
+        Self::BertTokenClassifier,
+        Self::PrivacyFilter,
+        Self::Gliner2_5,
+    ];
 
     pub fn as_str(self) -> &'static str {
         match self {
             Self::BertTokenClassifier => "bert_token_classifier",
             Self::PrivacyFilter => "openai_privacy_filter",
+            Self::Gliner2_5 => "gliner2_5",
         }
     }
 
@@ -92,6 +101,10 @@ impl TokenModelKind {
                 "OpenAI Privacy Filter PII tagger (model_type openai_privacy_filter, BIOES labels \
                  decoded with a calibrated Viterbi pass)"
             }
+            Self::Gliner2_5 => {
+                "GLiNER2.5 boundary span extractor (model_type gliner2 / gliner2_5 or architectures \
+                 Gliner2ForSchemaExtraction / BoundaryExtractor, architecture boundary)"
+            }
         }
     }
 
@@ -100,6 +113,7 @@ impl TokenModelKind {
             Self::BertTokenClassifier | Self::PrivacyFilter => {
                 TokenOutputShape::TokenClassification
             }
+            Self::Gliner2_5 => TokenOutputShape::SpanExtraction,
         }
     }
 }
@@ -141,9 +155,21 @@ fn detect_privacy_filter(config: &Value) -> Result<Option<TokenModelKind>> {
     Ok(Some(TokenModelKind::PrivacyFilter))
 }
 
+fn detect_gliner2_5(config: &Value) -> Result<Option<TokenModelKind>> {
+    if !gliner2_5::is_gliner2_config(config) {
+        return Ok(None);
+    }
+    gliner2_5::check_boundary_architecture(config)?;
+    Ok(Some(TokenModelKind::Gliner2_5))
+}
+
 /// One detector per family; the first that claims the config wins.
 type Detector = fn(&Value) -> Result<Option<TokenModelKind>>;
-const DETECTORS: &[Detector] = &[detect_bert_token_classifier, detect_privacy_filter];
+const DETECTORS: &[Detector] = &[
+    detect_bert_token_classifier,
+    detect_privacy_filter,
+    detect_gliner2_5,
+];
 
 /// Recognize a token-classification or span-extraction checkpoint from its
 /// `config.json`.
@@ -308,6 +334,13 @@ pub fn load_token_classifier_with(
             let (model, tokenizer) = PrivacyFilterTagger::load(&model_dir, &config, point)?;
             (Box::new(model), tokenizer)
         }
+        TokenModelKind::Gliner2_5 => {
+            return Err(wrong_subcommand_error(
+                &model_dir,
+                kind,
+                TokenOutputShape::TokenClassification,
+            ));
+        }
     };
     let classifier = TokenClassifier::new(model, tokenizer)
         .with_context(|| format!("failed to build the tagger for {}", model_dir.display()))?;
@@ -322,19 +355,20 @@ pub fn load_token_classifier_with(
 pub fn load_span_extractor(model_path: &Path) -> Result<LoadedSpanExtractor> {
     let (model_dir, config, kind) = detect_for(model_path, TokenOutputShape::SpanExtraction)?;
     let model_type = model_type(&config).unwrap_or_else(|| "unknown".to_string());
-    // A span-extraction family adds an arm here that builds its model and
-    // returns `Ok(LoadedSpanExtractor { extractor: Box::new(model), kind,
-    // model_type })`. `detect_for` already refused every token-classification
-    // kind, so their arms only restate that refusal.
+    // `detect_for` already refused every token-classification kind, so their
+    // arms only restate that refusal.
     match kind {
-        TokenModelKind::BertTokenClassifier | TokenModelKind::PrivacyFilter => {
-            let _ = model_type;
-            Err(wrong_subcommand_error(
-                &model_dir,
+        TokenModelKind::Gliner2_5 => {
+            let model = Gliner2_5Model::load(&model_dir, &config)?;
+            Ok(LoadedSpanExtractor {
+                extractor: Box::new(model),
                 kind,
-                TokenOutputShape::SpanExtraction,
-            ))
+                model_type,
+            })
         }
+        TokenModelKind::BertTokenClassifier | TokenModelKind::PrivacyFilter => Err(
+            wrong_subcommand_error(&model_dir, kind, TokenOutputShape::SpanExtraction),
+        ),
     }
 }
 

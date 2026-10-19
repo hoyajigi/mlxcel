@@ -1168,6 +1168,12 @@ pub(crate) fn detect_model_type_with_probes<P: ModelDetectionProbes + ?Sized>(
             "openai_privacy_filter is a token classifier; use `mlxcel tag` (checkpoint {})",
             model_path.display()
         )),
+        // A span extractor, not a generator: `mlxcel extract` loads it through
+        // `token_classification::loader`.
+        "gliner2" | "gliner2_5" => Err(anyhow::anyhow!(
+            "GLiNER2.5 is a span extractor; use `mlxcel extract` (checkpoint {})",
+            model_path.display()
+        )),
         _ => Err(anyhow::anyhow!(
             "Unsupported model type: {}",
             model_type_raw

@@ -105,6 +105,10 @@ pub mod cohere_compass_rope;
 pub mod colidefics3;
 pub mod colqwen2_5;
 pub mod dbrx;
+pub mod deberta_v2;
+// Facade: the config type and the bucketing helper are re-exported from
+// `deberta_v2`, so callers keep one public path.
+mod deberta_v2_config;
 pub mod deepseek;
 pub mod deepseek_v2;
 pub mod deepseek_v3;
