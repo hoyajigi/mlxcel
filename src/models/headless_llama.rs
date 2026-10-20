@@ -97,3 +97,7 @@ impl HeadlessLlama {
         self.norm.forward(&h)
     }
 }
+
+#[cfg(test)]
+#[path = "headless_llama_tests.rs"]
+mod headless_llama_tests;

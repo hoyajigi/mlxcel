@@ -248,6 +248,65 @@ fn embedding_norm_root_is_prefixed() {
     assert_eq!(weights.len(), before);
 }
 
+/// The key passes [`Lfm2EmbeddingModel::load`] applies before
+/// `Lfm2Model::from_weights` runs its own sanitize.
+fn family_sanitize(weights: &mut WeightMap) -> usize {
+    let folded = crate::models::embedding_sanitize::sanitize_decoder_embedding_weights(weights);
+    super::prefix_embedding_norm(weights);
+    folded
+}
+
+fn sorted_keys(weights: &WeightMap) -> Vec<String> {
+    let mut keys: Vec<String> = weights.keys().cloned().collect();
+    keys.sort();
+    keys
+}
+
+#[test]
+fn sanitize_key_sets_are_pinned_for_both_layouts() {
+    // Pins the exact key set the family hands to `Lfm2Model::from_weights`,
+    // for the published bare export and for an mlx conversion, so moving the
+    // `embedding_norm.` rule cannot move a key without failing here.
+    let mut rng = Rng::new(0x1424_0003);
+    let mut bare = WeightMap::new();
+    for key in [
+        "embed_tokens.weight",
+        "layers.0.conv.conv.weight",
+        "layers.0.conv.in_proj.weight",
+        "layers.0.feed_forward.w1.weight",
+        "layers.0.operator_norm.weight",
+        "layers.2.self_attn.q_layernorm.weight",
+        "layers.2.self_attn.out_proj.weight",
+        "embedding_norm.weight",
+        "lm_head.weight",
+    ] {
+        rng.insert(&mut bare, key, &[2, 2], 0.1);
+    }
+    assert_eq!(family_sanitize(&mut bare), 0);
+    let expected = vec![
+        "model.embed_tokens.weight",
+        "model.embedding_norm.weight",
+        "model.layers.0.conv.conv.weight",
+        "model.layers.0.conv.in_proj.weight",
+        "model.layers.0.feed_forward.w1.weight",
+        "model.layers.0.operator_norm.weight",
+        "model.layers.2.self_attn.out_proj.weight",
+        "model.layers.2.self_attn.q_layernorm.weight",
+    ];
+    assert_eq!(sorted_keys(&bare), expected);
+
+    // The mlx conversion already carries `model.`: zero renames, and a second
+    // pass over the sanitized bare map is a no-op too.
+    let mut converted = WeightMap::new();
+    for key in &expected {
+        rng.insert(&mut converted, key, &[2, 2], 0.1);
+    }
+    family_sanitize(&mut converted);
+    assert_eq!(sorted_keys(&converted), expected);
+    family_sanitize(&mut bare);
+    assert_eq!(sorted_keys(&bare), expected);
+}
+
 #[test]
 fn rejects_late_interaction_layout() {
     // The LFM2 / LFM2.5 ColBERT checkpoints share this `model_type` and this
