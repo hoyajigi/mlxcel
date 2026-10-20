@@ -427,6 +427,38 @@ fn generation_refuses_the_checkpoint_and_tag_names_extract() {
 }
 
 #[test]
+fn extract_loader_refuses_an_out_of_range_max_len_before_reading_weights() {
+    for value in [json!(0), json!(32769), json!(-1), json!("x")] {
+        let mut config = live_config();
+        config["max_len"] = value.clone();
+        let dir = checkpoint_dir(&config);
+        let err = format!("{:#}", load_span_extractor(dir.path()).err().unwrap());
+        assert!(
+            err.contains("max_len must be an integer in 1..=32768"),
+            "max_len {value}: {err}"
+        );
+    }
+    // The ceiling itself and an absent value pass the check and fail only
+    // on the missing weights.
+    for config in [
+        {
+            let mut config = live_config();
+            config["max_len"] = json!(32768);
+            config
+        },
+        {
+            let mut config = live_config();
+            config.as_object_mut().unwrap().remove("max_len");
+            config
+        },
+    ] {
+        let dir = checkpoint_dir(&config);
+        let err = format!("{:#}", load_span_extractor(dir.path()).err().unwrap());
+        assert!(!err.contains("max_len"), "{err}");
+    }
+}
+
+#[test]
 fn extract_loader_fails_on_a_missing_sidecar_before_reading_weights() {
     let mut config = live_config();
     config.as_object_mut().unwrap().remove("encoder_config");

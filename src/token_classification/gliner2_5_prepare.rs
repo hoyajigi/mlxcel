@@ -268,6 +268,10 @@ pub fn resolve_flat_overlaps(spans: &[ScoredSpan]) -> Vec<ScoredSpan> {
     kept
 }
 
+#[cfg(test)]
+#[path = "gliner2_5_prepare_tests.rs"]
+mod gliner2_5_prepare_tests;
+
 /// `text[start..end]` by Unicode scalar index.
 pub fn char_slice(text: &str, start: usize, end: usize) -> String {
     text.chars()
