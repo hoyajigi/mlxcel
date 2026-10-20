@@ -357,6 +357,14 @@ when migrating an existing llama-server command. TLS is enabled by supplying
 both `--ssl-cert-file` and `--ssl-key-file`. A `--host` ending in `.sock` starts
 a Unix-domain-socket listener, and `--api-prefix` nests all routes below a path.
 
+The public set is matched literally against the request path as the client sent
+it, prefix included. With `--api-prefix /llama` and keys enabled,
+`/llama/health` and `/llama/v1/health` are therefore not public and need a
+bearer key, which matches llama-server b10621. The unprefixed `/health` is still
+treated as public but is not mounted, so it answers 404. Health probes that
+cannot send a key (for example a load balancer) should not be pointed at a
+prefixed server with keys enabled. Startup logs a warning when both are set.
+
 With `AIP_MODE=PREDICTION`, the server also honors the Vertex AI custom-container
 `AIP_HTTP_PORT`, `AIP_HEALTH_ROUTE`, and `AIP_PREDICT_ROUTE` variables. See
 [`environment-variables.md`](environment-variables.md) for the complete
