@@ -42,7 +42,8 @@ Relevance scoring lives on the same page, under [Reranking](#reranking-v1rerank-
 | `src/server/routes/embeddings.rs` | HTTP handler, validation order, error mapping. |
 | `src/server/types/embeddings.rs` | Request and response types, base64 encoding. |
 | `src/commands/embed.rs` | `mlxcel embed`. |
-| `src/models/embedding_sanitize.rs` | Weight-key normalization shared by the decoder-backbone families: `{N}_Dense.linear.*` folding, head dropping, `model.` prefixing. |
+| `src/models/embedding_sanitize.rs` | Weight-key normalization shared by the decoder-backbone families: `{N}_Dense.linear.*` folding, head dropping, `model.` prefixing (including LFM2's `embedding_norm.`), and the opt-in `language_model.` wrapper strip and derived-buffer drop. |
+| `src/models/headless_llama.rs` | `HeadlessLlama`: the one Llama backbone assembly without a generation head, shared by bidirectional Llama, Llama-Nemotron-VL-Embed and ColIdefics3. |
 | `src/models/gemma3_embedding.rs` | EmbeddingGemma: bidirectional Gemma 3, mean pooling, two `Dense` projections. |
 | `src/models/embedding_gemma2.rs` | EmbeddingGemma 2: multimodal bidirectional Gemma 4, projection-only PLE, 512 -> 768 `embedding_projection`, mean pooling. |
 | `src/models/qwen3_embedding.rs` | Qwen3-Embedding: causal Qwen3, last-token pooling. |
@@ -330,7 +331,7 @@ maxsim(q, d) = sum over query rows i of ( max over document rows j of dot(q_i, d
 
 ### Bidirectional Llama, LLM2Vec (`LlamaBidirec`)
 
-The LLM2Vec recipe: an ordinary Llama 3.2 1B decoder converted to an encoder by dropping the causal mask. `nvidia/llama-nemotron-embed-1b-v2` exports it as `model_type: llama_bidirec`, `architectures: ["LlamaBidirectionalModel"]`, `use_bidirectional_attention: true` and a `1_Pooling` module declaring mean pooling. Nothing about the layers changes: the same `rope_scaling` `llama3` schedule at factor 32, the same norms, the same GQA 32/8 with `head_dim` 64. Only the mask and the missing head differ, so the port builds `llama3::TransformerBlock` layers straight from the weight map rather than through `Llama3Model`, whose `lm_head` field is not optional and would otherwise materialize a tied `128256 x 2048` projection this path never applies.
+The LLM2Vec recipe: an ordinary Llama 3.2 1B decoder converted to an encoder by dropping the causal mask. `nvidia/llama-nemotron-embed-1b-v2` exports it as `model_type: llama_bidirec`, `architectures: ["LlamaBidirectionalModel"]`, `use_bidirectional_attention: true` and a `1_Pooling` module declaring mean pooling. Nothing about the layers changes: the same `rope_scaling` `llama3` schedule at factor 32, the same norms, the same GQA 32/8 with `head_dim` 64. Only the mask and the missing head differ, so the port assembles the `llama3::TransformerBlock` layers through the shared `HeadlessLlama` rather than through `Llama3Model`, whose `lm_head` field is not optional and would otherwise materialize a tied `128256 x 2048` projection this path never applies.
 
 The published export saves the inner `LlamaBidirectionalModel`, so the roots arrive bare (`embed_tokens.weight`, `layers.0.…`, `norm.weight`) and are prefixed with `model.` at load. A `language_model.` wrapper prefix is stripped first, and the derived `rotary_emb.inv_freq` and `position_ids` buffers are dropped, since this tree rebuilds the frequency table from `rope_theta` and `rope_scaling`.
 

@@ -224,36 +224,10 @@ fn embed_one(model: &Lfm2EmbeddingModel, ids: &[i32]) -> Vec<f32> {
 
 // Weight sanitize.
 
-#[test]
-fn embedding_norm_root_is_prefixed() {
-    // LFM2's final norm is `embedding_norm.weight`, which matches none of the
-    // shared helper's backbone roots (`embed_tokens.`, `layers.`, `norm.`), so
-    // without this family's own pass the constructor would fail looking for
-    // `model.embedding_norm.weight`.
-    let mut rng = Rng::new(11);
-    let mut weights = WeightMap::new();
-    for key in [
-        "embedding_norm.weight",
-        "model.embedding_norm.weight",
-        "layers.0.ffn_norm.weight",
-    ] {
-        rng.insert(&mut weights, key, &[2, 2], 0.1);
-    }
-    super::prefix_embedding_norm(&mut weights);
-    assert!(weights.contains_key("model.embedding_norm.weight"));
-    assert!(!weights.contains_key("embedding_norm.weight"));
-    // Idempotent: an mlx conversion already carrying the prefix is untouched.
-    let before = weights.len();
-    super::prefix_embedding_norm(&mut weights);
-    assert_eq!(weights.len(), before);
-}
-
 /// The key passes [`Lfm2EmbeddingModel::load`] applies before
 /// `Lfm2Model::from_weights` runs its own sanitize.
 fn family_sanitize(weights: &mut WeightMap) -> usize {
-    let folded = crate::models::embedding_sanitize::sanitize_decoder_embedding_weights(weights);
-    super::prefix_embedding_norm(weights);
-    folded
+    crate::models::embedding_sanitize::sanitize_decoder_embedding_weights(weights)
 }
 
 fn sorted_keys(weights: &WeightMap) -> Vec<String> {

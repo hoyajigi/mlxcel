@@ -23,7 +23,8 @@
 //! architecture, and [`HeadlessLlama::forward_hidden`] is the generator's
 //! forward pass truncated at the final norm.
 //!
-//! Used by: `crate::models::colidefics3`.
+//! Used by: `crate::models::colidefics3`, `crate::models::llama_bidirec`,
+//! `crate::models::llama_nemotron_vl_embedding`.
 
 use mlxcel_core::layers::{KVCache, RMSNorm, UnifiedEmbedding};
 use mlxcel_core::weights::WeightMap;
