@@ -74,16 +74,16 @@ A checkpoint is served as an embedding model, before the ordinary `model_type` d
 - `modules.json` exists and lists a module whose `type` ends with `.Pooling` (the sentence-transformers layout). A `modules.json` whose only extra module is `1_LogitScore` (Qwen3-VL-Reranker) does not qualify.
 - `1_Pooling/config.json` exists.
 
-A checkpoint whose `architectures[0]` ends with `ForSequenceClassification` is a reranker, never an embedder, whatever else its layout says. On `bert`, `xlm-roberta` and `modernbert` it detects as `ModelType::SequenceClassifier` and is served on `/v1/rerank`; on any other family it falls through to the ordinary `model_type` dispatch, which reports it.
+A checkpoint whose `architectures[0]` ends with `ForSequenceClassification` is a reranker, never an embedder, whatever else its layout says. On `bert`, `xlm-roberta` (also spelled `xlm_roberta`) and `modernbert` it detects as `ModelType::SequenceClassifier` and is served on `/v1/rerank`; on any other family it falls through to the ordinary `model_type` dispatch, which reports it.
 
 The resolved family is keyed on `model_type`:
 
 | `model_type` | `ModelType` |
 |--------------|-------------|
 | `bert` | `Bert` |
-| `xlm-roberta` | `XlmRoberta` |
+| `xlm-roberta`, `xlm_roberta` | `XlmRoberta` |
 | `modernbert` | `ModernBert` |
-| `siglip` | `SiglipText` |
+| `siglip`, `siglip_text_model` | `SiglipText` |
 | `gemma3_text`, `gemma3` | `Gemma3Embedding` |
 | `embedding_gemma2`, `embedding_gemma2_text` | `EmbeddingGemma2` |
 | `qwen3` | `Qwen3Embedding` |
