@@ -41,8 +41,11 @@ impl Lcg {
         (self.0 >> 33) as u32
     }
 
+    /// Uniform in `[-scale, scale)`: the top 24 bits of the state, the same
+    /// form as `openai_privacy_filter_tests::Lcg`.
     pub(super) fn next_f32(&mut self, scale: f32) -> f32 {
-        let unit = (self.next_u32() >> 8) as f32 / (1u32 << 24) as f32;
+        self.next_u32();
+        let unit = (self.0 >> 40) as f32 / (1u64 << 24) as f32;
         (unit * 2.0 - 1.0) * scale
     }
 
@@ -51,6 +54,16 @@ impl Lcg {
         let data: Vec<f32> = (0..count).map(|_| self.next_f32(scale)).collect();
         mlxcel_core::from_slice_f32(&data, shape)
     }
+}
+
+/// The f32 activations as the kernel sees them: the CUDA overlay promotes
+/// `bf16 + f32` to bf16 (`overlays/cuda/mlx/dtype.cpp`), so `gather_mm` casts
+/// f32 activations to bf16 before the GEMM, and the f64 reference has to
+/// start from those rounded values.
+pub(super) fn bf16_values(array: &MlxArray) -> Vec<f32> {
+    let rounded = mlxcel_core::astype(array, dtype::BFLOAT16);
+    mlxcel_core::eval(&rounded);
+    to_vec(&rounded)
 }
 
 pub(super) fn to_vec(array: &MlxArray) -> Vec<f32> {
@@ -173,7 +186,7 @@ impl SortedCase {
         let rows = ids.len() as i32;
         let x = rng.f32_array(&[rows, 1, HIDDEN], 1.0);
         mlxcel_core::eval(&x);
-        let x_host = to_vec(&x);
+        let x_host = bf16_values(&x);
         let idx = mlxcel_core::from_slice_u32(&ids, &[rows]);
         Self {
             plane: SwitchLinear::Regular { weight },

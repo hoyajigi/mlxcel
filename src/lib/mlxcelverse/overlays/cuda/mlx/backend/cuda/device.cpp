@@ -11,7 +11,9 @@
 #include <fmt/format.h>
 #include <nvtx3/nvtx3.hpp>
 #include <algorithm>
+#include <cctype>
 #include <cstdlib>
+#include <string>
 #include <future>
 #include <unordered_set>
 
@@ -35,32 +37,70 @@ const char* save_cuda_graphs_dot_file() {
   return filename;
 }
 
+// [mlxcel #2462] Boolean environment flags with the convention
+// docs/environment-variables.md uses: trimmed, case-insensitive; `0`,
+// `false`, `off` and `no` are false, `1`, `true`, `on` and `yes` are true,
+// unset or anything else is `default_value`. MLX's `env::get_var` is `atoi`,
+// which would read `on` as 0.
+bool mlxcel_env_flag(const char* name, bool default_value) {
+  const char* raw = std::getenv(name);
+  if (raw == nullptr) {
+    return default_value;
+  }
+  std::string value(raw);
+  auto begin = value.find_first_not_of(" \t\r\n");
+  if (begin == std::string::npos) {
+    return default_value;
+  }
+  value = value.substr(begin, value.find_last_not_of(" \t\r\n") - begin + 1);
+  for (auto& c : value) {
+    c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+  }
+  if (value == "0" || value == "false" || value == "off" || value == "no") {
+    return false;
+  }
+  if (value == "1" || value == "true" || value == "on" || value == "yes") {
+    return true;
+  }
+  return default_value;
+}
+
 // [mlxcel #2462] Whether captured child graphs act as barriers. On by
-// default; MLXCEL_CUDA_GRAPH_CAPTURE_BARRIER=0 restores upstream's data-only
-// dependencies for A/B runs.
+// default; MLXCEL_CUDA_GRAPH_CAPTURE_BARRIER=0 (or false/off/no) restores
+// upstream's data-only dependencies for A/B runs.
 bool capture_barrier_enabled() {
-  static bool enabled = env::get_var("MLXCEL_CUDA_GRAPH_CAPTURE_BARRIER", true);
+  static bool enabled = mlxcel_env_flag("MLXCEL_CUDA_GRAPH_CAPTURE_BARRIER", true);
   return enabled;
 }
 
 // [mlxcel #2462] Per-encoder barrier bookkeeping, kept out of device.h so the
 // header stays upstream's: the nodes added to the current graph that have no
-// successor yet (open branches), and the last captured child graph. The map
-// is thread-local because an encoder is driven by one thread: the main
-// thread's encoders live in `get_command_encoders`' static map and every
-// other thread has its own, and mlxcel never calls `new_thread_unsafe_stream`
-// (the only way an encoder from `get_global_command_encoders` is reached from
-// a second thread). If that changes, this map needs a mutex, or the open and
-// barrier nodes of one thread would point into a graph another thread reset.
+// successor yet (open branches), the last barrier node, and whether the
+// concurrent batch being collected holds a capture. The map is thread-local
+// because an encoder is driven by one thread: the main thread's encoders
+// live in `get_command_encoders`' static map and every other thread has its
+// own, and mlxcel never calls `new_thread_unsafe_stream` (the only way an
+// encoder from `get_global_command_encoders` is reached from a second
+// thread). If that changes, this map needs a mutex, or the open and barrier
+// nodes of one thread would point into a graph another thread reset. The map
+// is leaked on purpose: `~CommandEncoder` runs `commit` and `clear_graph_state`
+// during thread exit, after a thread_local with a destructor may be gone.
 struct CaptureBarrierState {
   std::vector<std::pair<cudaGraphNode_t, std::string>> open;
   std::pair<cudaGraphNode_t, std::string> barrier{nullptr, ""};
+  bool concurrent_has_capture{false};
 };
 
 std::unordered_map<const void*, CaptureBarrierState>& capture_barrier_states() {
-  static thread_local std::unordered_map<const void*, CaptureBarrierState> m;
-  return m;
+  static thread_local auto* m =
+      new std::unordered_map<const void*, CaptureBarrierState>();
+  return *m;
 }
+
+// [mlxcel #2462] Set by `add_graph_node` around its `insert_graph_dependencies`
+// call, so the barrier logic learns that a node is a captured child graph
+// from the caller instead of sniffing the node type string.
+thread_local bool pending_capture_node = false;
 
 inline bool is_empty_dim(dim3 dim) {
   return (dim.x == 0 && dim.y == 0 && dim.z == 0) ||
@@ -150,17 +190,36 @@ CommandEncoder::ConcurrentContext::~ConcurrentContext() {
   // Insert the input -> concurrent node dependencies without updating output
   // nodes
   auto outputs = std::move(enc.active_outputs_);
+  bool batch_has_capture = capture_barrier_enabled() &&
+      capture_barrier_states()[&enc].concurrent_has_capture;
   enc.insert_graph_dependencies(std::move(enc.concurrent_nodes_));
 
   // Update output node to be the empty node
   for (auto o : outputs) {
     enc.node_map_.emplace(o, empty).first->second = empty;
   }
+
+  // [mlxcel #2462] Every batch node now has the join node as a successor, so
+  // the join node is the open branch; when the batch held a captured child
+  // graph it is also the barrier every later node depends on.
+  if (capture_barrier_enabled()) {
+    auto& state = capture_barrier_states()[&enc];
+    state.open.clear();
+    state.open.push_back({empty.node, empty.id});
+    if (batch_has_capture) {
+      state.barrier = {empty.node, empty.id};
+    }
+  }
 }
 
 void CommandEncoder::insert_graph_dependencies(GraphNode node) {
   node.id = std::to_string(node_count_++);
   if (in_concurrent_) {
+    // [mlxcel #2462] The batch inherits the capture flag of any node in it.
+    if (pending_capture_node) {
+      capture_barrier_states()[this].concurrent_has_capture = true;
+      pending_capture_node = false;
+    }
     concurrent_nodes_.push_back(std::move(node));
   } else {
     std::vector<GraphNode> nodes;
@@ -207,8 +266,13 @@ void CommandEncoder::insert_graph_dependencies(std::vector<GraphNode> nodes) {
     // topology.
     if (capture_barrier_enabled() && !nodes.empty()) {
       auto& state = capture_barrier_states()[this];
-      bool is_capture = !nodes.back().node_type.empty() &&
-          nodes.back().node_type[0] == '(';
+      // A single node is a capture when `add_graph_node` says so; a
+      // concurrent batch (`ConcurrentContext`) is one when any node it
+      // collected was, and its join node becomes the barrier afterwards
+      // (`~ConcurrentContext`).
+      bool is_capture = pending_capture_node || state.concurrent_has_capture;
+      pending_capture_node = false;
+      state.concurrent_has_capture = false;
       if (is_capture) {
         for (auto& [node, id] : state.open) {
           if (set_deps.insert(node).second) {
@@ -518,6 +582,7 @@ void CommandEncoder::add_graph_node(cudaGraph_t child) {
   auto [sub_graph_key, is_updatable] = subgraph_to_key(child);
   is_graph_updatable_ &= is_updatable;
   CHECK_CUDA_ERROR(cudaGraphAddChildGraphNode(&node, graph_, NULL, 0, child));
+  pending_capture_node = true;
   insert_graph_dependencies(GraphNode{node, sub_graph_key});
 }
 
@@ -536,6 +601,7 @@ void CommandEncoder::add_graph_node(
   is_graph_updatable_ &= is_updatable;
   cudaGraphNode_t node;
   CHECK_CUDA_ERROR(cudaGraphAddChildGraphNode(&node, graph_, NULL, 0, child));
+  pending_capture_node = true;
   insert_graph_dependencies(GraphNode{node, subgraph_key});
 }
 
@@ -639,7 +705,7 @@ void CommandEncoder::commit_impl() {
       // [mlxcel] MLXCEL_CUDA_GRAPHS_DOT_VERBOSE=1 adds node parameters to
       // the dump, which is what shows which buffers concurrent nodes touch.
       static const unsigned dot_flags =
-          env::get_var("MLXCEL_CUDA_GRAPHS_DOT_VERBOSE", false)
+          mlxcel_env_flag("MLXCEL_CUDA_GRAPHS_DOT_VERBOSE", false)
           ? cudaGraphDebugDotFlagsVerbose
           : 0;
       CHECK_CUDA_ERROR(

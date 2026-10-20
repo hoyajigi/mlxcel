@@ -23,8 +23,8 @@ use mlxcel_core::dtype;
 
 use super::SwitchLinear;
 use super::sorted_gather_test_support::{
-    EXPERTS, HIDDEN, INTER, Lcg, assert_matches_reference, bf16_plane, reference, report,
-    sorted_expert_ids, to_vec,
+    EXPERTS, HIDDEN, INTER, Lcg, assert_matches_reference, bf16_plane, bf16_values, reference,
+    report, sorted_expert_ids, to_vec,
 };
 use crate::models::embedding_test_support::mlx_test_guard;
 
@@ -45,12 +45,12 @@ fn sorted_gather_mm_with_a_unit_stride_on_the_singleton_axis() {
     // [rows, 1, HIDDEN] with strides [HIDDEN, 1, 1].
     let x = mlxcel_core::swap_axes(&flat, 1, 2);
     mlxcel_core::eval(&x);
-    eprintln!(
-        "x strides {:?} shape {:?}",
+    assert_eq!(
         mlxcel_core::array_strides(&x),
-        mlxcel_core::array_shape(&x)
+        vec![i64::from(HIDDEN), 1, 1],
+        "the view must carry a unit stride on the singleton axis"
     );
-    let x_host = to_vec(&x);
+    let x_host = bf16_values(&x);
     let idx = mlxcel_core::from_slice_u32(&ids, &[rows]);
     let layer = SwitchLinear::Regular { weight };
     let want = reference(&x_host, &exact_w, &ids, INTER as usize, HIDDEN as usize);
@@ -93,17 +93,17 @@ fn sorted_gather_mm_with_a_transposed_layout_plane() {
     );
     let plane = mlxcel_core::copy(&mlxcel_core::swap_axes(&kn, -1, -2));
     mlxcel_core::eval(&plane);
-    eprintln!(
-        "plane strides {:?} shape {:?}",
+    assert_eq!(
         mlxcel_core::array_strides(&plane),
-        mlxcel_core::array_shape(&plane)
+        vec![i64::from(HIDDEN) * i64::from(INTER), 1, i64::from(HIDDEN)],
+        "the plane must be stored in transposed layout"
     );
     let exact_w = to_vec(&plane);
     let ids = sorted_expert_ids(&mut rng, 24);
     let rows = ids.len() as i32;
     let x = rng.f32_array(&[rows, 1, HIDDEN], 1.0);
     mlxcel_core::eval(&x);
-    let x_host = to_vec(&x);
+    let x_host = bf16_values(&x);
     let idx = mlxcel_core::from_slice_u32(&ids, &[rows]);
     let layer = SwitchLinear::Regular { weight: plane };
     let want = reference(&x_host, &exact_w, &ids, INTER as usize, HIDDEN as usize);
@@ -170,7 +170,7 @@ fn sorted_gather_mm_after_a_biased_expert_add() {
 
     let activations = mlxcel_core::astype(&biased, dtype::FLOAT32);
     mlxcel_core::eval(&activations);
-    let act_host = to_vec(&activations);
+    let act_host = bf16_values(&activations);
     let want = reference(
         &act_host,
         &exact_down,
