@@ -9,7 +9,7 @@ mlxcel runs two kinds of per-token output model offline, each behind its own sub
 
 The two shapes are separate traits (`TokenClassifierModel` and `SpanExtractorModel` in `src/token_classification/`) because they take different inputs: a fixed-label model handed request labels would have to ignore them silently. Passing a checkpoint to the other shape's subcommand fails with a message naming the right one.
 
-There is no HTTP route for either shape yet. mlx-vlm, the reference implementation, defines none either, so serving these over HTTP is left for a later issue.
+mlxcel does not serve either shape over HTTP, by decision. mlx-vlm, the reference implementation, defines no route, so there is no upstream request or response schema to match, and OpenAI-compatible clients have no endpoint for per-token tags or request-time spans. A route would be designed in its own issue if a client needs one; until then the CLI is the only surface.
 
 ## Supported families
 
