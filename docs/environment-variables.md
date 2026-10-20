@@ -8,6 +8,12 @@ variables are useful for containers, service units, and repeatable benchmark
 runs, but they are process-wide and several of the low-level knobs are read once
 and cached on first use. Set them before starting `mlxcel` or `mlxcel-server`.
 
+Every `MLXCEL_*` name that appears as a string literal under `src/**/*.rs` must
+be mentioned on this page, or be allowlisted as test-only, fixture-authoring,
+build-internal, or an internal diagnostic in
+[`scripts/ci/check_env_var_docs.py`](../scripts/ci/check_env_var_docs.py).
+`make verify-env-var-docs` and the `env var docs` CI job enforce it (#1140).
+
 ## Precedence and value conventions
 
 - If a CLI flag and an environment variable control the same option, the CLI
