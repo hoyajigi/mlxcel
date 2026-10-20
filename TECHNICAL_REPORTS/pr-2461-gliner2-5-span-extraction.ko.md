@@ -25,6 +25,7 @@ span 추출 family가 하나도 없어서 `mlxcel extract`는 모든 체크포�
 - `src/models/deberta_v2.rs`, `deberta_v2_config.rs`, `deberta_v2_tests.rs` (신규), `bert.rs`, `detection.rs`, `mod.rs`.
 - `src/token_classification/gliner2_5.rs`, `_prepare.rs`, `_head.rs`, `_layers.rs`, `_pool.rs`, `_scorer.rs`와 각 테스트 (신규), `loader.rs`, `mod.rs`.
 - `src/main.rs` (`mlxcel extract --help` 예시).
+- `docs/token-classification.md`는 두 shape 모두에 대해 HTTP route를 명시적으로 두지 않는다고 적는다(upstream도 정의하지 않는다). 이로써 에픽 #2391의 마지막 수용 기준이 충족된다.
 - `tests/fixtures/token_classification/`: mlx-vlm GLiNER2.5 fixture, DeBERTa-v2 레이어 fixture, `transformers` 긴 입력 fixture, 생성 스크립트 (mlx-vlm 0.7.8 git `73d366ec`, mlx 0.32.4, transformers 5.20.1, torch 2.14.1+cpu).
 - `docs/token-classification.md` (GLiNER2.5 절과 README 예시), `docs/supported-models.md`, `CHANGELOG.md`.
 
@@ -66,6 +67,7 @@ GB10, `--profile test-fast --features cuda`, `MLX_ENABLE_TF32=0` 환경에서 �
 | `2690e4f1` | feat(models): support GLiNER2.5 span extraction on a DeBERTa-v2 encoder |
 | `e92a73ab` | fix(models): harden GLiNER2.5 and DeBERTa-v2 after review |
 | `2e4f125b` | test(models): cover GLiNER2.5 prepare limits, document load ceilings |
+| `f9c4ec71` | docs: decline an HTTP route for token classification and span extraction |
 
 ## 관련 항목
 

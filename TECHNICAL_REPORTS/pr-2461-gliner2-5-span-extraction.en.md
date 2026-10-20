@@ -25,6 +25,7 @@ Closes #2390, the last sub-issue of epic #2391. Adds GLiNER2.5 (Fastino), a DeBE
 - `src/models/deberta_v2.rs`, `deberta_v2_config.rs`, `deberta_v2_tests.rs` (new); `bert.rs`, `detection.rs`, `mod.rs`.
 - `src/token_classification/gliner2_5.rs`, `_prepare.rs`, `_head.rs`, `_layers.rs`, `_pool.rs`, `_scorer.rs` and their tests (new); `loader.rs`, `mod.rs`.
 - `src/main.rs` (`mlxcel extract --help` examples).
+- `docs/token-classification.md` now declines an HTTP route for both shapes explicitly (upstream defines none), which closes the last acceptance criterion of epic #2391.
 - `tests/fixtures/token_classification/`: mlx-vlm GLiNER2.5 fixture, DeBERTa-v2 layer fixture, `transformers` long-input fixture, and the generator (mlx-vlm 0.7.8 git `73d366ec`, mlx 0.32.4, transformers 5.20.1, torch 2.14.1+cpu).
 - `docs/token-classification.md` (GLiNER2.5 section and README examples), `docs/supported-models.md`, `CHANGELOG.md`.
 
@@ -66,6 +67,7 @@ Most added lines are JSON fixtures (about 14900 lines).
 | `2690e4f1` | feat(models): support GLiNER2.5 span extraction on a DeBERTa-v2 encoder |
 | `e92a73ab` | fix(models): harden GLiNER2.5 and DeBERTa-v2 after review |
 | `2e4f125b` | test(models): cover GLiNER2.5 prepare limits, document load ceilings |
+| `f9c4ec71` | docs: decline an HTTP route for token classification and span extraction |
 
 ## Related
 
