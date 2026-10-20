@@ -269,6 +269,7 @@ fn model_and_engine() -> Option<EmbeddingEngine> {
     let loaded = load_embedding_model(&dir).expect("Llama-Nemotron-VL-Embed loads");
     assert_eq!(loaded.model_type, ModelType::LlamaNemotronVLEmbedding);
     assert_eq!(loaded.limits.dim, DIM);
+    assert_eq!(loaded.limits.max_length, 4096);
     assert!(loaded.model.supports_images());
     Some(EmbeddingEngine::new(loaded, 16))
 }
